@@ -17,7 +17,7 @@
 #define UNIX64
 #include <NTPtime.h>
 
-String VERSION = "3.5";
+String VERSION = "3.6";
 
 struct Settings {
   String        apssid                 = "JAAM";
@@ -184,10 +184,10 @@ int d21[] = { 21, 16, 17, 18, 19, 20, 22 };
 int d22[] = { 22, 6, 7, 16, 20, 21, 23, 24, 25 };
 int d23[] = { 23, 2, 5, 6, 22, 24 };
 int d24[] = { 24, 1, 2, 22, 23 };
-int d25[] = { 25, 6, 7, 8, 19, 20, 22 };
+int d25[] = { 25, 7 };
 
 
-int counters[] = { 3, 5, 7, 5, 4, 6, 6, 6, 5, 4, 5, 3, 4, 4, 4, 2, 5, 5, 8, 8, 7, 7, 9, 6, 5, 7 };
+int counters[] = { 3, 5, 7, 5, 4, 6, 6, 6, 5, 4, 5, 3, 4, 4, 4, 2, 5, 5, 8, 8, 7, 7, 9, 6, 5, 2 };
 
 std::vector<String> districts = {
   "Закарпатська обл.",
@@ -701,10 +701,10 @@ void initWifi() {
   wm.startWebPortal();
   delay(5000);
   setupRouting();
-  initHA();
   initUpdates();
   initBroadcast();
   socketConnect();
+  initHA();
   showServiceMessage(WiFi.localIP().toString(), "IP-адреса мапи:", 5000);
 }
 
@@ -841,7 +841,13 @@ void initHA() {
       device.setSoftwareVersion(settings.softwareversion);
       device.setManufacturer("v00g100skr");
       device.setModel(deviceDescr);
+      // Doesn't work right now. Try on next arduino HA release.
+      // const char* deviceUrl = ((String) "http://"+ WiFi.localIP().toString() + ":80/").c_str();
+      // Serial.println(deviceUrl);
+      // device.setConfigurationUrl(deviceUrl);
+      device.enableExtendedUniqueIds();
       device.enableSharedAvailability();
+      device.enableLastWill();
 
       haUptime.setIcon("mdi:timer-outline");
       haUptime.setName("Uptime");
@@ -852,16 +858,19 @@ void initHA() {
       haWifiSignal.setName("WIFI Signal");
       haWifiSignal.setUnitOfMeasurement("dBm");
       haWifiSignal.setDeviceClass("signal_strength");
+      haWifiSignal.setStateClass("measurement");
 
       haFreeMemory.setIcon("mdi:memory");
       haFreeMemory.setName("Free Memory");
       haFreeMemory.setUnitOfMeasurement("kB");
       haFreeMemory.setDeviceClass("data_size");
+      haFreeMemory.setStateClass("measurement");
 
       haUsedMemory.setIcon("mdi:memory");
       haUsedMemory.setName("Used Memory");
       haUsedMemory.setUnitOfMeasurement("kB");
       haUsedMemory.setDeviceClass("data_size");
+      haUsedMemory.setStateClass("measurement");
 
       haBrightness.onCommand(onHaBrightnessCommand);
       haBrightness.setIcon("mdi:brightness-percent");
@@ -891,7 +900,7 @@ void initHA() {
 
       haMapApiConnect.setName("Connectivity");
       haMapApiConnect.setDeviceClass("connectivity");
-      haMapApiConnect.setCurrentState(false);
+      haMapApiConnect.setCurrentState(client_websocket.available());
 
       haBrightnessAuto.onCommand(onhaBrightnessAutoCommand);
       haBrightnessAuto.setIcon("mdi:brightness-auto");
@@ -920,6 +929,7 @@ void initHA() {
       haCpuTemp.setDeviceClass("temperature");
       haCpuTemp.setUnitOfMeasurement("°C");
       haCpuTemp.setCurrentValue(temperatureRead());
+      haCpuTemp.setStateClass("measurement");
 
       haHomeDistrict.setIcon("mdi:home-map-marker");
       haHomeDistrict.setName("Home District");
@@ -935,17 +945,18 @@ void initHA() {
       haLight.onRGBColorCommand(onHaLightRGBColor);
 
       device.enableLastWill();
-      mqtt.onConnected(mqttConnected);
+      mqtt.onStateChanged(onMqttStateChanged);
       mqtt.begin(brokerAddr, settings.ha_mqttport, mqttUser, mqttPassword);
     }
   }
 }
 
-void mqttConnected() {
-  Serial.println("Home Assistant MQTT connected!");
-  haConnected = true;
-  servicePin(settings.hapin, HIGH, false);
-  if (enableHA) {
+void onMqttStateChanged(HAMqtt::ConnectionState state) {
+  Serial.print("Home Assistant MQTT state changed! State:");
+  Serial.println(state);
+  haConnected = state == HAMqtt::StateConnected;
+  servicePin(settings.hapin, haConnected ? HIGH : LOW, false);
+  if (enableHA && haConnected) {
     // Update HASensors values (Unlike the other device types, the HASensor doesn't store the previous value that was set. It means that the MQTT message is produced each time the setValue method is called.)
     haMapModeCurrent.setValue(mapModes[getCurrentMapMode()].c_str());
     haHomeDistrict.setValue(districtsAlphabetical[numDistrictToAlphabet(settings.home_district)].c_str());
@@ -979,6 +990,7 @@ void onHaLightRGBColor(HALight::RGBColor rgb, HALight* sender) {
 
 void onHaButtonClicked(HAButton* sender) {
   if (sender == &haReboot) {
+    device.setAvailability(false);
     rebootDevice();
   } else if (sender == &haToggleMapMode) {
     mapModeSwitch();
@@ -1592,7 +1604,7 @@ void displayCycle() {
   // update service message expiration
   serviceMessageUpdate();
 
-  // Show service message if not expired (Always shown, it's short message)
+  // Show service message if not expired (Always show, it's short message)
   if (!serviceMessage.expired) {
     displayServiceMessage(serviceMessage);
     return;
@@ -1740,7 +1752,7 @@ void showNewFirmwareNotification() {
   String message;
   if (remainder < toggleTime) {
     title = "Доступне оновлення:";
-    message = (String) "v" + getFwVersion(latestFirmware);
+    message = getFwVersion(latestFirmware);
   } else if (settings.button_mode == 0) {
     title = "Введіть у браузері:";
     message = WiFi.localIP().toString();
@@ -1767,8 +1779,8 @@ void showTemp() {
 }
 
 void showTechInfo() {
-  int toggleTime = 3;  // seconds
-  int remainder = timeClient.second() % (toggleTime * 5);
+  int toggleTime = settings.display_mode_time;  // seconds
+  int remainder = timeClient.second() % (toggleTime * 6);
   String title;
   String message;
   // IP address
@@ -1789,9 +1801,12 @@ void showTechInfo() {
     title = "Статус map-API:";
     message = apiConnected ? "Підключено" : "Відключено";
     // HA Status
-  } else {
+  } else if (remainder < toggleTime * 5) {
     title = "Home Assistant:";
     message = haConnected ? "Підключено" : "Відключено";
+  } else {
+    title = "Версія прошивки:";
+    message = VERSION;
   }
 
   displayMessage(message, getTextSizeToFitDisplay(message), title);
@@ -1974,7 +1989,7 @@ void handleRoot(AsyncWebServerRequest* request) {
     html += "           <div class='col-md-6 offset-md-3'>";
     html += "              <div class='row'>";
     html += "                 <div class='box_yellow col-md-12 mt-2' style='background-color: #ffc107; color: #212529'>";
-    html += "                    <h8>Доспуна нова версія прошивки <a href='https://github.com/v00g100skr/ukraine_alarm_map/releases/tag/" + getFwVersion(latestFirmware) + "'>v" + getFwVersion(latestFirmware) + "</a></br>Для оновлення перейдіть в розділ \"Прошивка\"</h8>";
+    html += "                    <h8>Доспуна нова версія прошивки <a href='https://github.com/v00g100skr/ukraine_alarm_map/releases/tag/" + getFwVersion(latestFirmware) + "'>" + getFwVersion(latestFirmware) + "</a></br>Для оновлення перейдіть в розділ \"Прошивка\"</h8>";
     html += "                </div>";
     html += "              </div>";
     html += "            </div>";
@@ -2432,7 +2447,7 @@ void handleRoot(AsyncWebServerRequest* request) {
   std::vector<String> tempBinList = settings.fw_update_channel == 1 ? test_bin_list : bin_list;
   for (String& filename : tempBinList) {
     html += "<option value='" + filename + "'";
-    if (settings.bin_name == filename) html += " selected";
+    if (filename == "latest.bin" || filename == "latest_beta.bin") html += " selected";
     html += ">" + filename + "</option>";
   }
   html += "                              </select>";
@@ -3251,10 +3266,16 @@ void onEventsCallback(WebsocketsEvent event, String data) {
     Serial.println("connnection opened");
     servicePin(settings.datapin, HIGH, false);
     websocketLastPingTime = millis();
+    if (enableHA) {
+      haMapApiConnect.setState(apiConnected, true);
+    }
   } else if (event == WebsocketsEvent::ConnectionClosed) {
     apiConnected = false;
     Serial.println("connnection closed");
     servicePin(settings.datapin, LOW, false);
+    if (enableHA) {
+      haMapApiConnect.setState(apiConnected, true);
+    }
   } else if (event == WebsocketsEvent::GotPing) {
     Serial.println("websocket ping");
     client_websocket.pong();
