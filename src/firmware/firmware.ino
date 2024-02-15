@@ -100,6 +100,7 @@ struct Settings {
   int     day_start              = 8;
   int     night_start            = 22;
   int     ws_alert_time          = 120000;
+  int     ws_reboot_time         = 180000;
   int     min_of_silence         = 1;
   int     enable_pin_on_alert    = 0;
   int     fw_update_channel      = 0;
@@ -603,6 +604,7 @@ void initSettings() {
   settings.sdm_auto               = preferences.getInt("sdma", settings.sdm_auto);
   settings.new_fw_notification    = preferences.getInt("nfwn", settings.new_fw_notification);
   settings.ws_alert_time          = preferences.getInt("wsat", settings.ws_alert_time);
+  settings.ws_reboot_time         = preferences.getInt("wsrt", settings.ws_reboot_time);
   settings.ha_light_brightness    = preferences.getInt("ha_lbri", settings.ha_light_brightness);
   settings.ha_light_r             = preferences.getInt("ha_lr", settings.ha_light_r);
   settings.ha_light_g             = preferences.getInt("ha_lg", settings.ha_light_g);
@@ -685,6 +687,7 @@ void initWifi() {
   wm.setConnectRetries(10);
   wm.setAPCallback(apCallback);
   wm.setSaveConfigCallback(saveConfigCallback);
+  wm.setConfigPortalTimeout(180);
   servicePin(settings.wifipin, LOW, false);
   showServiceMessage(wm.getWiFiSSID(true), "Підключення до:", 5000);
   String apssid = settings.apssid + "_" + chipID;
@@ -1989,7 +1992,7 @@ void handleRoot(AsyncWebServerRequest* request) {
     html += "           <div class='col-md-6 offset-md-3'>";
     html += "              <div class='row'>";
     html += "                 <div class='box_yellow col-md-12 mt-2' style='background-color: #ffc107; color: #212529'>";
-    html += "                    <h8>Доспуна нова версія прошивки <a href='https://github.com/v00g100skr/ukraine_alarm_map/releases/tag/" + getFwVersion(latestFirmware) + "'>" + getFwVersion(latestFirmware) + "</a></br>Для оновлення перейдіть в розділ \"Прошивка\"</h8>";
+    html += "                    <h8>Доступна нова версія прошивки <a href='https://github.com/v00g100skr/ukraine_alarm_map/releases/tag/" + getFwVersion(latestFirmware) + "'>" + getFwVersion(latestFirmware) + "</a></br>Для оновлення перейдіть в розділ \"Прошивка\"</h8>";
     html += "                </div>";
     html += "              </div>";
     html += "            </div>";
@@ -3205,7 +3208,9 @@ void websocketProcess() {
       mapReconnect();
     }
     socketConnect();
-    delay(3000);
+    if (millis() - websocketLastPingTime > settings.ws_reboot_time) {
+      rebootDevice(3000, true);
+    }
   }
 }
 
@@ -3659,7 +3664,7 @@ void setup() {
   asyncEngine.setInterval(WifiReconnect, 1000);
   asyncEngine.setInterval(autoBrightnessUpdate, 1000);
   asyncEngine.setInterval(doUpdate, 1000);
-  asyncEngine.setInterval(websocketProcess, 1000);
+  asyncEngine.setInterval(websocketProcess, 3000);
   asyncEngine.setInterval(alertPinCycle, 1000);
   asyncEngine.setInterval(rebootCycle, 500);
 }
